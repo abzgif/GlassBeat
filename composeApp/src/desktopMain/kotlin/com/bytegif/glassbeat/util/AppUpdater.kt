@@ -245,7 +245,7 @@ object AppUpdater {
         }
     }
 
-    private suspend fun launchMacOsInstallerAndReopen(installerFile: File) = withContext(Dispatchers.IO) {
+    private suspend fun launchMacOsInstallerAndReopen(installerFile: File): Unit = withContext(Dispatchers.IO) {
         val currentPid = ProcessHandle.current().pid()
         val currentCmd = ProcessHandle.current().info().command().orElse("")
         val detectedAppBundle = if (currentCmd.contains(".app/Contents/")) {
@@ -322,7 +322,7 @@ object AppUpdater {
         exitProcess(0)
     }
 
-    private suspend fun launchSourceGitPullAndReopen(workDir: File) = withContext(Dispatchers.IO) {
+    private suspend fun launchSourceGitPullAndReopen(workDir: File): Unit = withContext(Dispatchers.IO) {
         val currentPid = ProcessHandle.current().pid()
         val scriptFile = File(System.getProperty("java.io.tmpdir"), "glassbeat_source_update.sh")
         scriptFile.writeText(

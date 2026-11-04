@@ -15,7 +15,7 @@ kotlin {
     }
 
     sourceSets {
-        val desktopMain by getting {
+        getByName("desktopMain") {
             dependencies {
                 implementation(compose.desktop.currentOs)
                 implementation(compose.material3)
