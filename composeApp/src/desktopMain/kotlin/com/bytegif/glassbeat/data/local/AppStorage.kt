@@ -2,6 +2,7 @@ package com.bytegif.glassbeat.data.local
 
 import com.bytegif.glassbeat.data.model.ListenHistoryEntity
 import com.bytegif.glassbeat.data.model.PlaylistEntity
+import com.bytegif.glassbeat.data.model.PlaylistSongEntity
 import com.bytegif.glassbeat.data.model.RepeatMode
 import com.bytegif.glassbeat.data.model.SongSortOrder
 import kotlinx.coroutines.Dispatchers
@@ -13,8 +14,6 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
-import java.sql.Connection
-import java.sql.DriverManager
 
 @Serializable
 data class PersistedAppState(
@@ -35,10 +34,20 @@ data class PersistedAppState(
     val savedRepeatMode: String = RepeatMode.OFF.name
 )
 
+@Serializable
+data class PersistedLibraryDatabase(
+    val nextPlaylistId: Long = 1L,
+    val nextHistoryId: Long = 1L,
+    val favorites: Set<Long> = emptySet(),
+    val playlists: List<PlaylistEntity> = emptyList(),
+    val playlistSongs: List<PlaylistSongEntity> = emptyList(),
+    val listenHistory: List<ListenHistoryEntity> = emptyList()
+)
+
 object AppStorage {
 
     private val json = Json {
-        prettyPrint = true
+        prettyPrint = false
         ignoreUnknownKeys = true
         encodeDefaults = true
     }
@@ -51,139 +60,45 @@ object AppStorage {
     }
 
     private val prefsFile: File by lazy { File(appSupportDir, "preferences.json") }
-    private val dbFile: File by lazy { File(appSupportDir, "glassbeat.db") }
+    private val dbJsonFile: File by lazy { File(appSupportDir, "library_store.json") }
+
+    @Volatile
+    private var dbData: PersistedLibraryDatabase = loadDbInternal()
 
     private val _state = MutableStateFlow(loadPrefsInternal())
     val state: StateFlow<PersistedAppState> = _state.asStateFlow()
 
-    private val _favorites = MutableStateFlow<Set<Long>>(emptySet())
+    private val _favorites = MutableStateFlow<Set<Long>>(dbData.favorites)
     val favorites: StateFlow<Set<Long>> = _favorites.asStateFlow()
 
-    private val _playlists = MutableStateFlow<List<PlaylistEntity>>(emptyList())
+    private val _playlists = MutableStateFlow<List<PlaylistEntity>>(
+        dbData.playlists.sortedByDescending { it.createdAt }
+    )
     val playlists: StateFlow<List<PlaylistEntity>> = _playlists.asStateFlow()
 
-    private val _history = MutableStateFlow<List<ListenHistoryEntity>>(emptyList())
+    private val _history = MutableStateFlow<List<ListenHistoryEntity>>(
+        dbData.listenHistory.sortedByDescending { it.playedAt }.take(200)
+    )
     val history: StateFlow<List<ListenHistoryEntity>> = _history.asStateFlow()
 
-    init {
-        initDatabase()
-        reloadAllTables()
-    }
-
-    private fun getConnection(): Connection {
-        Class.forName("org.sqlite.JDBC")
-        return DriverManager.getConnection("jdbc:sqlite:${dbFile.absolutePath}")
-    }
-
-    private fun initDatabase() {
-        try {
-            getConnection().use { conn ->
-                conn.createStatement().use { stmt ->
-                    stmt.executeUpdate(
-                        """
-                        CREATE TABLE IF NOT EXISTS favorites (
-                            mediaId INTEGER PRIMARY KEY
-                        );
-                        """.trimIndent()
-                    )
-                    stmt.executeUpdate(
-                        """
-                        CREATE TABLE IF NOT EXISTS playlists (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            name TEXT NOT NULL,
-                            createdAt INTEGER NOT NULL
-                        );
-                        """.trimIndent()
-                    )
-                    stmt.executeUpdate(
-                        """
-                        CREATE TABLE IF NOT EXISTS playlist_songs (
-                            playlistId INTEGER NOT NULL,
-                            songId INTEGER NOT NULL,
-                            addedAt INTEGER NOT NULL,
-                            PRIMARY KEY (playlistId, songId)
-                        );
-                        """.trimIndent()
-                    )
-                    stmt.executeUpdate(
-                        """
-                        CREATE TABLE IF NOT EXISTS listen_history (
-                            id INTEGER PRIMARY KEY AUTOINCREMENT,
-                            songId INTEGER NOT NULL,
-                            title TEXT NOT NULL,
-                            artist TEXT NOT NULL,
-                            albumId INTEGER NOT NULL,
-                            songPath TEXT NOT NULL DEFAULT '',
-                            playedAt INTEGER NOT NULL,
-                            lastPosition INTEGER NOT NULL DEFAULT 0,
-                            duration INTEGER NOT NULL DEFAULT 0
-                        );
-                        """.trimIndent()
-                    )
-                }
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
+    private fun loadDbInternal(): PersistedLibraryDatabase {
+        if (!dbJsonFile.exists()) return PersistedLibraryDatabase()
+        return try {
+            json.decodeFromString<PersistedLibraryDatabase>(dbJsonFile.readText())
+        } catch (_: Exception) {
+            PersistedLibraryDatabase()
         }
     }
 
-    fun reloadAllTables() {
+    @Synchronized
+    private fun updateDb(transform: (PersistedLibraryDatabase) -> PersistedLibraryDatabase) {
+        val next = transform(dbData)
+        dbData = next
+        _favorites.value = next.favorites
+        _playlists.value = next.playlists.sortedByDescending { it.createdAt }
+        _history.value = next.listenHistory.sortedByDescending { it.playedAt }.take(200)
         try {
-            getConnection().use { conn ->
-                // Favorites
-                val favSet = mutableSetOf<Long>()
-                conn.createStatement().executeQuery("SELECT mediaId FROM favorites").use { rs ->
-                    while (rs.next()) {
-                        favSet.add(rs.getLong("mediaId"))
-                    }
-                }
-                _favorites.value = favSet
-
-                // Playlists
-                val plList = mutableListOf<PlaylistEntity>()
-                conn.createStatement().executeQuery("SELECT id, name, createdAt FROM playlists ORDER BY createdAt DESC").use { rs ->
-                    while (rs.next()) {
-                        plList.add(
-                            PlaylistEntity(
-                                id = rs.getLong("id"),
-                                name = rs.getString("name"),
-                                createdAt = rs.getLong("createdAt")
-                            )
-                        )
-                    }
-                }
-                _playlists.value = plList
-
-                // Listen History (one per songId, ordered by playedAt DESC, limit 200)
-                val histList = mutableListOf<ListenHistoryEntity>()
-                val query = """
-                    SELECT id, songId, title, artist, albumId, songPath, playedAt, lastPosition, duration
-                    FROM listen_history
-                    WHERE id IN (
-                        SELECT MAX(id) FROM listen_history GROUP BY songId
-                    )
-                    ORDER BY playedAt DESC
-                    LIMIT 200
-                """.trimIndent()
-                conn.createStatement().executeQuery(query).use { rs ->
-                    while (rs.next()) {
-                        histList.add(
-                            ListenHistoryEntity(
-                                id = rs.getLong("id"),
-                                songId = rs.getLong("songId"),
-                                title = rs.getString("title"),
-                                artist = rs.getString("artist"),
-                                albumId = rs.getLong("albumId"),
-                                songPath = rs.getString("songPath") ?: "",
-                                playedAt = rs.getLong("playedAt"),
-                                lastPosition = rs.getLong("lastPosition"),
-                                duration = rs.getLong("duration")
-                            )
-                        )
-                    }
-                }
-                _history.value = histList
-            }
+            dbJsonFile.writeText(json.encodeToString(next))
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -201,7 +116,7 @@ object AppStorage {
             } else {
                 loaded
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             PersistedAppState(musicDirectories = listOf(defaultMusicDir))
         }
     }
@@ -220,202 +135,136 @@ object AppStorage {
     // ── Favorites ────────────────────────────────────────────────────────────
 
     suspend fun toggleFavorite(mediaId: Long): Boolean = withContext(Dispatchers.IO) {
-        val isFav: Boolean
-        getConnection().use { conn ->
-            val exists = conn.prepareStatement("SELECT 1 FROM favorites WHERE mediaId = ?").use { ps ->
-                ps.setLong(1, mediaId)
-                ps.executeQuery().use { it.next() }
-            }
-            if (exists) {
-                conn.prepareStatement("DELETE FROM favorites WHERE mediaId = ?").use { ps ->
-                    ps.setLong(1, mediaId)
-                    ps.executeUpdate()
-                }
-                isFav = false
+        var isNowFav = false
+        updateDb { current ->
+            val mutable = current.favorites.toMutableSet()
+            isNowFav = if (mediaId in mutable) {
+                mutable.remove(mediaId)
+                false
             } else {
-                conn.prepareStatement("INSERT OR REPLACE INTO favorites(mediaId) VALUES (?)").use { ps ->
-                    ps.setLong(1, mediaId)
-                    ps.executeUpdate()
-                }
-                isFav = true
+                mutable.add(mediaId)
+                true
             }
+            current.copy(favorites = mutable)
         }
-        reloadAllTables()
-        isFav
+        isNowFav
     }
 
     suspend fun removeFavorite(mediaId: Long) = withContext(Dispatchers.IO) {
-        getConnection().use { conn ->
-            conn.prepareStatement("DELETE FROM favorites WHERE mediaId = ?").use { ps ->
-                ps.setLong(1, mediaId)
-                ps.executeUpdate()
-            }
+        updateDb { current ->
+            current.copy(favorites = current.favorites - mediaId)
         }
-        reloadAllTables()
     }
 
     // ── Playlists ────────────────────────────────────────────────────────────
 
     suspend fun createPlaylist(name: String): Long = withContext(Dispatchers.IO) {
-        var newId = 0L
-        getConnection().use { conn ->
-            conn.prepareStatement(
-                "INSERT INTO playlists(name, createdAt) VALUES (?, ?)",
-                java.sql.Statement.RETURN_GENERATED_KEYS
-            ).use { ps ->
-                ps.setString(1, name)
-                ps.setLong(2, System.currentTimeMillis())
-                ps.executeUpdate()
-                ps.generatedKeys.use { keys ->
-                    if (keys.next()) newId = keys.getLong(1)
-                }
-            }
+        var createdId = 0L
+        updateDb { current ->
+            createdId = current.nextPlaylistId
+            val newPl = PlaylistEntity(
+                id = createdId,
+                name = name,
+                createdAt = System.currentTimeMillis()
+            )
+            current.copy(
+                nextPlaylistId = createdId + 1L,
+                playlists = current.playlists + newPl
+            )
         }
-        reloadAllTables()
-        newId
+        createdId
     }
 
     suspend fun renamePlaylist(playlistId: Long, newName: String) = withContext(Dispatchers.IO) {
-        getConnection().use { conn ->
-            conn.prepareStatement("UPDATE playlists SET name = ? WHERE id = ?").use { ps ->
-                ps.setString(1, newName)
-                ps.setLong(2, playlistId)
-                ps.executeUpdate()
-            }
+        updateDb { current ->
+            current.copy(
+                playlists = current.playlists.map {
+                    if (it.id == playlistId) it.copy(name = newName) else it
+                }
+            )
         }
-        reloadAllTables()
     }
 
     suspend fun deletePlaylist(playlistId: Long) = withContext(Dispatchers.IO) {
-        getConnection().use { conn ->
-            conn.prepareStatement("DELETE FROM playlist_songs WHERE playlistId = ?").use { ps ->
-                ps.setLong(1, playlistId)
-                ps.executeUpdate()
-            }
-            conn.prepareStatement("DELETE FROM playlists WHERE id = ?").use { ps ->
-                ps.setLong(1, playlistId)
-                ps.executeUpdate()
-            }
+        updateDb { current ->
+            current.copy(
+                playlists = current.playlists.filterNot { it.id == playlistId },
+                playlistSongs = current.playlistSongs.filterNot { it.playlistId == playlistId }
+            )
         }
-        reloadAllTables()
     }
 
     suspend fun addSongToPlaylist(playlistId: Long, songId: Long) = withContext(Dispatchers.IO) {
-        getConnection().use { conn ->
-            conn.prepareStatement(
-                "INSERT OR IGNORE INTO playlist_songs(playlistId, songId, addedAt) VALUES (?, ?, ?)"
-            ).use { ps ->
-                ps.setLong(1, playlistId)
-                ps.setLong(2, songId)
-                ps.setLong(3, System.currentTimeMillis())
-                ps.executeUpdate()
-            }
+        updateDb { current ->
+            val exists = current.playlistSongs.any { it.playlistId == playlistId && it.songId == songId }
+            if (exists) current
+            else current.copy(
+                playlistSongs = current.playlistSongs + PlaylistSongEntity(
+                    playlistId = playlistId,
+                    songId = songId,
+                    addedAt = System.currentTimeMillis()
+                )
+            )
         }
-        reloadAllTables()
     }
 
     suspend fun removeSongFromPlaylist(playlistId: Long, songId: Long) = withContext(Dispatchers.IO) {
-        getConnection().use { conn ->
-            conn.prepareStatement(
-                "DELETE FROM playlist_songs WHERE playlistId = ? AND songId = ?"
-            ).use { ps ->
-                ps.setLong(1, playlistId)
-                ps.setLong(2, songId)
-                ps.executeUpdate()
-            }
+        updateDb { current ->
+            current.copy(
+                playlistSongs = current.playlistSongs.filterNot {
+                    it.playlistId == playlistId && it.songId == songId
+                }
+            )
         }
-        reloadAllTables()
     }
 
     suspend fun getSongIdsForPlaylist(playlistId: Long): List<Long> = withContext(Dispatchers.IO) {
-        val ids = mutableListOf<Long>()
-        getConnection().use { conn ->
-            conn.prepareStatement(
-                "SELECT songId FROM playlist_songs WHERE playlistId = ? ORDER BY addedAt ASC"
-            ).use { ps ->
-                ps.setLong(1, playlistId)
-                ps.executeQuery().use { rs ->
-                    while (rs.next()) {
-                        ids.add(rs.getLong("songId"))
-                    }
-                }
-            }
-        }
-        ids
+        dbData.playlistSongs
+            .filter { it.playlistId == playlistId }
+            .sortedBy { it.addedAt }
+            .map { it.songId }
     }
 
     // ── Listen History ───────────────────────────────────────────────────────
 
     suspend fun upsertHistory(entry: ListenHistoryEntity) = withContext(Dispatchers.IO) {
-        getConnection().use { conn ->
-            var existingPos = 0L
-            var existingDur = 0L
-            conn.prepareStatement(
-                "SELECT lastPosition, duration FROM listen_history WHERE songId = ? ORDER BY id DESC LIMIT 1"
-            ).use { ps ->
-                ps.setLong(1, entry.songId)
-                ps.executeQuery().use { rs ->
-                    if (rs.next()) {
-                        existingPos = rs.getLong("lastPosition")
-                        existingDur = rs.getLong("duration")
-                    }
-                }
-            }
-            val pos = if (entry.lastPosition > 0L) entry.lastPosition else existingPos
-            val dur = if (entry.duration > 0L) entry.duration else existingDur
-
-            conn.prepareStatement("DELETE FROM listen_history WHERE songId = ?").use { ps ->
-                ps.setLong(1, entry.songId)
-                ps.executeUpdate()
-            }
-            conn.prepareStatement(
-                """
-                INSERT INTO listen_history(songId, title, artist, albumId, songPath, playedAt, lastPosition, duration)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """.trimIndent()
-            ).use { ps ->
-                ps.setLong(1, entry.songId)
-                ps.setString(2, entry.title)
-                ps.setString(3, entry.artist)
-                ps.setLong(4, entry.albumId)
-                ps.setString(5, entry.songPath)
-                ps.setLong(6, entry.playedAt)
-                ps.setLong(7, pos)
-                ps.setLong(8, dur)
-                ps.executeUpdate()
-            }
+        updateDb { current ->
+            val existing = current.listenHistory.firstOrNull { it.songId == entry.songId }
+            val pos = if (entry.lastPosition > 0L) entry.lastPosition else (existing?.lastPosition ?: 0L)
+            val dur = if (entry.duration > 0L) entry.duration else (existing?.duration ?: 0L)
+            val newId = current.nextHistoryId
+            val updatedList = current.listenHistory
+                .filterNot { it.songId == entry.songId } +
+                entry.copy(id = newId, lastPosition = pos, duration = dur)
+            current.copy(
+                nextHistoryId = newId + 1L,
+                listenHistory = updatedList.sortedByDescending { it.playedAt }.take(200)
+            )
         }
-        reloadAllTables()
     }
 
     suspend fun updateHistoryPosition(songId: Long, positionMs: Long, durationMs: Long) = withContext(Dispatchers.IO) {
-        getConnection().use { conn ->
-            conn.prepareStatement(
-                "UPDATE listen_history SET lastPosition = ?, duration = ? WHERE songId = ?"
-            ).use { ps ->
-                ps.setLong(1, positionMs)
-                ps.setLong(2, durationMs)
-                ps.setLong(3, songId)
-                ps.executeUpdate()
-            }
+        updateDb { current ->
+            current.copy(
+                listenHistory = current.listenHistory.map {
+                    if (it.songId == songId) it.copy(lastPosition = positionMs, duration = durationMs)
+                    else it
+                }
+            )
         }
-        reloadAllTables()
     }
 
     suspend fun deleteHistoryForSong(songId: Long) = withContext(Dispatchers.IO) {
-        getConnection().use { conn ->
-            conn.prepareStatement("DELETE FROM listen_history WHERE songId = ?").use { ps ->
-                ps.setLong(1, songId)
-                ps.executeUpdate()
-            }
+        updateDb { current ->
+            current.copy(
+                listenHistory = current.listenHistory.filterNot { it.songId == songId }
+            )
         }
-        reloadAllTables()
     }
 
     suspend fun clearAllHistory() = withContext(Dispatchers.IO) {
-        getConnection().use { conn ->
-            conn.createStatement().executeUpdate("DELETE FROM listen_history")
+        updateDb { current ->
+            current.copy(listenHistory = emptyList())
         }
-        reloadAllTables()
     }
 }

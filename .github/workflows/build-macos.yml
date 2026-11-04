@@ -30,21 +30,54 @@ jobs:
       - name: Compile macOS CoreAudio Helper (Swift)
         run: |
           chmod +x gradlew run_macos.sh
-          swiftc -O composeApp/src/desktopMain/resources/macos/GlassBeatAudioHelper.swift \
+          swiftc -O -whole-module-optimization \
+            composeApp/src/desktopMain/resources/macos/GlassBeatAudioHelper.swift \
             -o composeApp/src/desktopMain/resources/macos/glassbeat-audio-helper
+          strip -S -x composeApp/src/desktopMain/resources/macos/glassbeat-audio-helper
           chmod +x composeApp/src/desktopMain/resources/macos/glassbeat-audio-helper
 
-      - name: Build macOS DMG & App Bundle
+      - name: Build macOS App Bundle
         run: |
-          ./gradlew :composeApp:packageDmg :composeApp:createDistributable --no-daemon
+          ./gradlew :composeApp:createDistributable --no-daemon
 
-      - name: Package .app as ZIP for OTA Auto-Update
+      - name: Apply Official GlassBeat Icon, Strip Debug Symbols & Package Compact DMG + ZIP
         run: |
           APP_DIR=$(find composeApp/build/compose/binaries/main/app -maxdepth 1 -name "*.app" | head -n 1)
-          if [[ -n "$APP_DIR" ]]; then
-            ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" composeApp/build/compose/binaries/main/dmg/GlassBeat-macOS-app.zip
+          if [[ -z "$APP_DIR" ]]; then
+            echo "Error: GlassBeat.app not found!"
+            exit 1
           fi
-          ls -lh composeApp/build/compose/binaries/main/dmg/
+
+          # 1. Ensure GlassBeat.icns is installed in Contents/Resources and replaces any default icon
+          cp -f composeApp/src/desktopMain/resources/GlassBeat.icns "$APP_DIR/Contents/Resources/GlassBeat.icns"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile GlassBeat.icns" "$APP_DIR/Contents/Info.plist" || true
+
+          # 2. Reduce app size: strip debug symbols from all native .dylib libraries & remove legal/man docs
+          find "$APP_DIR" -type f \( -name "*.dylib" -o -name "*.jnilib" \) -exec strip -S -x {} + 2>/dev/null || true
+          rm -rf "$APP_DIR/Contents/runtime/Contents/Home/legal" "$APP_DIR/Contents/runtime/Contents/Home/man" 2>/dev/null || true
+
+          # 3. Re-sign the optimized app bundle with ad-hoc signature so macOS caches the proper icon
+          touch "$APP_DIR"
+          codesign --force --deep --sign - "$APP_DIR"
+
+          # 4. Create output directory and package compact ZIP + high-compression DMG (zlib-level=9)
+          OUT_DIR="composeApp/build/compose/binaries/main/dmg"
+          mkdir -p "$OUT_DIR"
+
+          ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" "$OUT_DIR/GlassBeat-macOS-app.zip"
+
+          DMG_STAGE="/tmp/glassbeat_dmg_stage"
+          rm -rf "$DMG_STAGE"
+          mkdir -p "$DMG_STAGE"
+          cp -R "$APP_DIR" "$DMG_STAGE/"
+          ln -s /Applications "$DMG_STAGE/Applications"
+
+          hdiutil create -volname "GlassBeat" \
+            -srcfolder "$DMG_STAGE" \
+            -ov -format UDZO -imagekey zlib-level=9 \
+            "$OUT_DIR/GlassBeat-1.1.5.dmg"
+
+          ls -lh "$OUT_DIR/"
 
       - name: Upload macOS Installer Artifacts
         uses: actions/upload-artifact@v4
