@@ -1,0 +1,71 @@
+name: Build & Release GlassBeat macOS
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build macOS Application (.dmg & .app)
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Compile macOS CoreAudio Helper (Swift)
+        run: |
+          chmod +x gradlew run_macos.sh
+          swiftc -O composeApp/src/desktopMain/resources/macos/GlassBeatAudioHelper.swift \
+            -o composeApp/src/desktopMain/resources/macos/glassbeat-audio-helper
+          chmod +x composeApp/src/desktopMain/resources/macos/glassbeat-audio-helper
+
+      - name: Build macOS DMG & App Bundle
+        run: |
+          ./gradlew :composeApp:packageDmg :composeApp:createDistributable --no-daemon
+
+      - name: Package .app as ZIP for OTA Auto-Update
+        run: |
+          APP_DIR=$(find composeApp/build/compose/binaries/main/app -maxdepth 1 -name "*.app" | head -n 1)
+          if [[ -n "$APP_DIR" ]]; then
+            ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" composeApp/build/compose/binaries/main/dmg/GlassBeat-macOS-app.zip
+          fi
+          ls -lh composeApp/build/compose/binaries/main/dmg/
+
+      - name: Upload macOS Installer Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: GlassBeat-macOS-Installer
+          path: |
+            composeApp/build/compose/binaries/main/dmg/*.dmg
+            composeApp/build/compose/binaries/main/dmg/*.zip
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name == 'main' && 'v1.1.5' || github.ref_name }}
+          name: GlassBeat macOS ${{ github.ref_name == 'main' && 'v1.1.5' || github.ref_name }}
+          body: |
+            ### GlassBeat for macOS
+            - Native macOS Compose for Desktop build with CoreAudio 5-Band Parametric Equalizer (`AVAudioEngine` + `AVAudioUnitEQ` + `AVAudioUnitTimePitch`).
+            - Download **GlassBeat-1.1.5.dmg** below to install, or use **Settings → Check for Updates** inside the app to update and reopen automatically.
+          files: |
+            composeApp/build/compose/binaries/main/dmg/*.dmg
+            composeApp/build/compose/binaries/main/dmg/*.zip
+          draft: false
+          prerelease: false

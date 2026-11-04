@@ -1,0 +1,10 @@
+.gradle/
+.kotlin/
+build/
+composeApp/build/
+.idea/
+*.iml
+.DS_Store
+local.properties
+!gradle/wrapper/gradle-wrapper.jar
+!composeApp/src/desktopMain/resources/macos/glassbeat-audio-helper
