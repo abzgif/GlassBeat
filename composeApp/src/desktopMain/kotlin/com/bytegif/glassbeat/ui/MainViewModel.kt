@@ -539,15 +539,7 @@ class MainViewModel {
     // ── File System Actions & Settings ───────────────────────────────────────
 
     fun revealInFinder(song: AudioItem) {
-        try {
-            val file = File(song.data)
-            if (file.exists()) {
-                ProcessBuilder("open", "-R", file.absolutePath).start()
-            } else if (Desktop.isDesktopSupported()) {
-                Desktop.getDesktop().open(file.parentFile)
-            }
-        } catch (_: Exception) {
-        }
+        com.bytegif.glassbeat.util.PlatformUtils.revealFileInSystemManager(File(song.data))
     }
 
     fun deleteSongsFromDisk(songs: List<AudioItem>) {

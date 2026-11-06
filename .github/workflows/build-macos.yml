@@ -1,4 +1,4 @@
-name: Build & Release GlassBeat macOS
+name: Build & Release GlassBeat (macOS, Windows, Linux)
 
 on:
   push:
@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   build-macos:
-    name: Build macOS Application (.dmg & .app)
+    name: Build macOS (.dmg & .app)
     runs-on: macos-latest
 
     steps:
@@ -42,11 +42,12 @@ jobs:
         run: |
           APP_DIR=$(find composeApp/build/compose/binaries/main/app -maxdepth 1 -name "*.app" | head -n 1)
           if [[ -n "$APP_DIR" ]]; then
+            cp -f composeApp/src/desktopMain/resources/GlassBeat.icns "$APP_DIR/Contents/Resources/GlassBeat.icns" || true
             ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" composeApp/build/compose/binaries/main/dmg/GlassBeat-macOS-app.zip
           fi
           ls -lh composeApp/build/compose/binaries/main/dmg/
 
-      - name: Upload macOS Installer Artifacts
+      - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: GlassBeat-macOS-Installer
@@ -54,19 +55,97 @@ jobs:
             composeApp/build/compose/binaries/main/dmg/*.dmg
             composeApp/build/compose/binaries/main/dmg/*.zip
 
+  build-windows:
+    name: Build Windows (.msi & .exe)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Build Windows MSI & EXE Installers
+        run: |
+          ./gradlew.bat :composeApp:packageMsi :composeApp:packageExe --no-daemon
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: GlassBeat-Windows-Installer
+          path: |
+            composeApp/build/compose/binaries/main/msi/*.msi
+            composeApp/build/compose/binaries/main/exe/*.exe
+
+  build-linux:
+    name: Build Linux (.deb & .rpm)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux Packaging Tools (fakeroot, rpm)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fakeroot rpm
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Build Linux DEB & RPM Packages
+        run: |
+          chmod +x gradlew
+          ./gradlew :composeApp:packageDeb :composeApp:packageRpm --no-daemon
+
+      - name: Upload Linux Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: GlassBeat-Linux-Installer
+          path: |
+            composeApp/build/compose/binaries/main/deb/*.deb
+            composeApp/build/compose/binaries/main/rpm/*.rpm
+
+  publish-release:
+    name: Publish Multi-OS GitHub Release
+    needs: [ build-macos, build-windows, build-linux ]
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download All Platform Installers
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: List Release Assets
+        run: ls -lh release-assets/
+
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name == 'main' && 'v1.1.6' || github.ref_name }}
-          name: GlassBeat macOS ${{ github.ref_name == 'main' && 'v1.1.6' || github.ref_name }}
+          tag_name: ${{ github.ref_name == 'main' && 'v1.1.7' || github.ref_name }}
+          name: GlassBeat Desktop ${{ github.ref_name == 'main' && 'v1.1.7' || github.ref_name }} (macOS, Windows, Linux)
           body: |
-            ### GlassBeat for macOS
-            - Native macOS Compose for Desktop build with CoreAudio 5-Band Parametric Equalizer (`AVAudioEngine` + `AVAudioUnitEQ` + `AVAudioUnitTimePitch`).
-            - Fixed active macOS Dock icon sizing to match standard Apple HIG proportions (`80.5%` squircle grid) and centered audio tech specs & speed pills.
-            - Download **GlassBeat-1.1.6.dmg** below to install, or use **Settings → Check for Updates** inside the app to update and reopen automatically.
+            ### GlassBeat Desktop ${{ github.ref_name == 'main' && 'v1.1.7' || github.ref_name }} (Build 20)
+            Cross-platform glassmorphic music player and 5-band parametric equalizer for **macOS**, **Windows**, and **Linux**.
+
+            #### Downloads by Platform
+            - **macOS (Apple Silicon / macOS 12+)**: Download **`GlassBeat-1.1.7.dmg`**
+            - **Windows (Windows 10 / 11 64-bit)**: Download **`GlassBeat-1.1.7.msi`** or **`GlassBeat-1.1.7.exe`**
+            - **Linux (Ubuntu / Debian / Fedora / RHEL 64-bit)**: Download **`glassbeat_1.1.7-1_amd64.deb`** or **`glassbeat-1.1.7-1.x86_64.rpm`**
+            - **OTA Auto-Update**: Existing users can update directly from **Settings → Check for Updates**.
           files: |
-            composeApp/build/compose/binaries/main/dmg/*.dmg
-            composeApp/build/compose/binaries/main/dmg/*.zip
+            release-assets/*
           draft: false
           prerelease: false

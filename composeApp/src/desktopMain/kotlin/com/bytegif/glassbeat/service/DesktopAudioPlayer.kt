@@ -99,6 +99,10 @@ object DesktopAudioPlayer {
     }
 
     private fun startNativeHelperIfAvailable() {
+        if (!com.bytegif.glassbeat.util.PlatformUtils.isMacOs) {
+            useJvmFallback = true
+            return
+        }
         try {
             val helperFile = ensureHelperBinary()
             if (helperFile != null && helperFile.exists() && helperFile.canExecute()) {

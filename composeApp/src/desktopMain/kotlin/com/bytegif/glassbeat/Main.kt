@@ -188,7 +188,7 @@ fun GlassBeatDesktopApp(viewModel: MainViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .blur(mainBlurRadius)
-                .padding(top = 28.dp) // Space for macOS traffic lights
+                .padding(top = if (com.bytegif.glassbeat.util.PlatformUtils.isMacOs) 28.dp else 8.dp)
         ) {
             GlassSidebar(
                 currentTab = currentTab,
@@ -338,7 +338,7 @@ private fun GlassSidebar(
                         fontSize = 18.sp
                     )
                     Text(
-                        text = "macOS Edition",
+                        text = com.bytegif.glassbeat.util.PlatformUtils.editionTitle,
                         color = colors.onSurfaceVariant,
                         fontSize = 11.sp
                     )

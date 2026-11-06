@@ -44,10 +44,7 @@ object AppStorage {
     }
 
     val appSupportDir: File by lazy {
-        val home = System.getProperty("user.home") ?: "."
-        val dir = File(home, "Library/Application Support/GlassBeat")
-        if (!dir.exists()) dir.mkdirs()
-        dir
+        com.bytegif.glassbeat.util.PlatformUtils.getAppSupportDirectory()
     }
 
     private val prefsFile: File by lazy { File(appSupportDir, "preferences.json") }

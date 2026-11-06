@@ -57,14 +57,14 @@ sealed class UpdateCheckState {
 }
 
 /**
- * Built-in OTA Updater for mac-glassbeat (https://github.com/abzgif/mac-glassbeat).
- * Checks GitHub Releases, downloads the new macOS .dmg/.zip asset (or pulls source if running via Gradle),
- * installs the new version, and automatically reopens GlassBeat.
+ * Cross-platform OTA Updater for GlassBeat Desktop (https://github.com/abzgif/mac-glassbeat).
+ * Supports macOS (.dmg / .zip), Windows (.msi / .exe), and Linux (.deb / .rpm),
+ * automatically installing and reopening the updated application.
  */
 object AppUpdater {
 
-    const val CURRENT_VERSION = "1.1.6"
-    const val CURRENT_VERSION_CODE = 19
+    const val CURRENT_VERSION = "1.1.7"
+    const val CURRENT_VERSION_CODE = 20
     const val GITHUB_REPO_OWNER = "abzgif"
     const val GITHUB_REPO_NAME = "mac-glassbeat"
     const val GITHUB_REPO_URL = "https://github.com/$GITHUB_REPO_OWNER/$GITHUB_REPO_NAME"
@@ -90,10 +90,13 @@ object AppUpdater {
             if (Desktop.isDesktopSupported()) {
                 Desktop.getDesktop().browse(URI(url))
             } else {
-                ProcessBuilder("open", url).start()
+                when (PlatformUtils.currentOs) {
+                    DesktopOs.MACOS -> ProcessBuilder("open", url).start()
+                    DesktopOs.WINDOWS -> ProcessBuilder("cmd", "/c", "start", url).start()
+                    DesktopOs.LINUX -> ProcessBuilder("xdg-open", url).start()
+                }
             }
         } catch (_: Exception) {
-            runCatching { ProcessBuilder("open", url).start() }
         }
     }
 
@@ -113,19 +116,14 @@ object AppUpdater {
                 val currentClean = CURRENT_VERSION.removePrefix("v").removePrefix("V").trim()
 
                 if (isNewerVersion(latestClean, currentClean)) {
-                    val dmgAsset = release.assets.firstOrNull {
-                        it.name.endsWith(".dmg", ignoreCase = true) ||
-                            it.name.endsWith(".pkg", ignoreCase = true) ||
-                            it.name.endsWith(".app.zip", ignoreCase = true) ||
-                            it.name.endsWith(".zip", ignoreCase = true)
-                    }
+                    val matchedAsset = selectAssetForCurrentOs(release.assets)
                     _state.value = UpdateCheckState.UpdateAvailable(
                         currentVersion = CURRENT_VERSION,
                         latestVersion = latestClean,
                         releaseTitle = release.name.ifBlank { "GlassBeat v$latestClean" },
-                        releaseNotes = release.body.ifBlank { "New macOS release available on GitHub." },
+                        releaseNotes = release.body.ifBlank { "New desktop release available on GitHub." },
                         htmlUrl = release.htmlUrl.ifBlank { "$GITHUB_REPO_URL/releases" },
-                        dmgAsset = dmgAsset
+                        dmgAsset = matchedAsset
                     )
                 } else {
                     _state.value = UpdateCheckState.UpToDate(CURRENT_VERSION)
@@ -138,13 +136,32 @@ object AppUpdater {
         }
     }
 
+    private fun selectAssetForCurrentOs(assets: List<GitHubReleaseAsset>): GitHubReleaseAsset? {
+        return when (PlatformUtils.currentOs) {
+            DesktopOs.MACOS -> {
+                assets.firstOrNull { it.name.endsWith(".dmg", ignoreCase = true) }
+                    ?: assets.firstOrNull { it.name.endsWith(".pkg", ignoreCase = true) }
+                    ?: assets.firstOrNull { it.name.contains("mac", ignoreCase = true) && it.name.endsWith(".zip", ignoreCase = true) }
+            }
+            DesktopOs.WINDOWS -> {
+                assets.firstOrNull { it.name.endsWith(".msi", ignoreCase = true) }
+                    ?: assets.firstOrNull { it.name.endsWith(".exe", ignoreCase = true) }
+            }
+            DesktopOs.LINUX -> {
+                assets.firstOrNull { it.name.endsWith(".deb", ignoreCase = true) }
+                    ?: assets.firstOrNull { it.name.endsWith(".rpm", ignoreCase = true) }
+                    ?: assets.firstOrNull { it.name.endsWith(".AppImage", ignoreCase = true) }
+            }
+        }
+    }
+
     private fun fetchLatestRelease(): GitHubRelease? {
         val latestConn = (URL(LATEST_RELEASE_API).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 10_000
             readTimeout = 10_000
             setRequestProperty("Accept", "application/vnd.github+json")
-            setRequestProperty("User-Agent", "GlassBeat-macOS/$CURRENT_VERSION")
+            setRequestProperty("User-Agent", "GlassBeat-Desktop/$CURRENT_VERSION")
         }
 
         if (latestConn.responseCode == 200) {
@@ -152,13 +169,12 @@ object AppUpdater {
             return json.decodeFromString<GitHubRelease>(body)
         }
 
-        // Fallback to /releases list in case only pre-releases exist or /releases/latest returns 404
         val listConn = (URL(ALL_RELEASES_API).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 10_000
             readTimeout = 10_000
             setRequestProperty("Accept", "application/vnd.github+json")
-            setRequestProperty("User-Agent", "GlassBeat-macOS/$CURRENT_VERSION")
+            setRequestProperty("User-Agent", "GlassBeat-Desktop/$CURRENT_VERSION")
         }
         if (listConn.responseCode == 200) {
             val body = listConn.inputStream.bufferedReader().use { it.readText() }
@@ -182,10 +198,6 @@ object AppUpdater {
         return latest != current
     }
 
-    /**
-     * Downloads the update and launches a detached macOS updater script that installs
-     * the new version and automatically reopens GlassBeat.
-     */
     fun downloadAndApplyUpdate(updateInfo: UpdateCheckState.UpdateAvailable) {
         scope.launch {
             val asset = updateInfo.dmgAsset
@@ -193,7 +205,7 @@ object AppUpdater {
                 try {
                     val tempDir = File(System.getProperty("java.io.tmpdir"), "glassbeat_update")
                     if (!tempDir.exists()) tempDir.mkdirs()
-                    val downloadedFile = File(tempDir, asset.name.ifBlank { "GlassBeat-${updateInfo.latestVersion}.dmg" })
+                    val downloadedFile = File(tempDir, asset.name.ifBlank { "GlassBeat-${updateInfo.latestVersion}" })
 
                     _state.value = UpdateCheckState.Downloading(
                         latestVersion = updateInfo.latestVersion,
@@ -205,7 +217,7 @@ object AppUpdater {
                         instanceFollowRedirects = true
                         connectTimeout = 15_000
                         readTimeout = 30_000
-                        setRequestProperty("User-Agent", "GlassBeat-macOS/$CURRENT_VERSION")
+                        setRequestProperty("User-Agent", "GlassBeat-Desktop/$CURRENT_VERSION")
                     }
 
                     val total = if (conn.contentLengthLong > 0) conn.contentLengthLong else asset.size
@@ -227,14 +239,17 @@ object AppUpdater {
                     }
 
                     _state.value = UpdateCheckState.InstallingAndRestarting(updateInfo.latestVersion)
-                    launchMacOsInstallerAndReopen(downloadedFile)
+                    when (PlatformUtils.currentOs) {
+                        DesktopOs.MACOS -> launchMacOsInstallerAndReopen(downloadedFile)
+                        DesktopOs.WINDOWS -> launchWindowsInstallerAndReopen(downloadedFile)
+                        DesktopOs.LINUX -> launchLinuxInstallerAndReopen(downloadedFile)
+                    }
                 } catch (e: Exception) {
                     _state.value = UpdateCheckState.Error(
                         "Update download failed: ${e.localizedMessage ?: "Network error"}"
                     )
                 }
             } else {
-                // If running from git source checkout and no binary asset is attached yet, pull & relaunch
                 val workDir = File(System.getProperty("user.dir") ?: ".")
                 if (File(workDir, "run_macos.sh").exists()) {
                     _state.value = UpdateCheckState.InstallingAndRestarting(updateInfo.latestVersion)
@@ -261,7 +276,6 @@ object AppUpdater {
         val scriptFile = File(System.getProperty("java.io.tmpdir"), "glassbeat_apply_update.sh")
         val scriptContent = """
             #!/usr/bin/env bash
-            # Wait for old GlassBeat process ($currentPid) to exit
             for i in {1..30}; do
                 if ! kill -0 $currentPid 2>/dev/null; then
                     break
@@ -305,7 +319,6 @@ object AppUpdater {
                 fi
             fi
 
-            # Fallback if running from source directory
             if [[ -x "${runScriptFile.absolutePath}" ]]; then
                 cd "${workDir.absolutePath}"
                 git pull --ff-only 2>/dev/null || true
@@ -315,10 +328,65 @@ object AppUpdater {
 
         scriptFile.writeText(scriptContent)
         scriptFile.setExecutable(true)
+        ProcessBuilder("/bin/bash", "-c", "nohup \"${scriptFile.absolutePath}\" >/dev/null 2>&1 &").start()
+        kotlinx.coroutines.delay(400L)
+        exitProcess(0)
+    }
 
-        ProcessBuilder("/bin/bash", "-c", "nohup \"${scriptFile.absolutePath}\" >/dev/null 2>&1 &")
-            .start()
+    private suspend fun launchWindowsInstallerAndReopen(installerFile: File): Unit = withContext(Dispatchers.IO) {
+        val currentCmd = ProcessHandle.current().info().command().orElse("")
+        val localAppData = System.getenv("LOCALAPPDATA") ?: ""
+        val defaultExe = if (localAppData.isNotEmpty()) "$localAppData\\Programs\\GlassBeat\\GlassBeat.exe" else "C:\\Program Files\\GlassBeat\\GlassBeat.exe"
+        val targetExe = if (currentCmd.endsWith("GlassBeat.exe", ignoreCase = true)) currentCmd else defaultExe
 
+        val batFile = File(System.getProperty("java.io.tmpdir"), "glassbeat_apply_update.bat")
+        val isMsi = installerFile.name.endsWith(".msi", ignoreCase = true)
+        val installCmd = if (isMsi) {
+            "msiexec /i \"${installerFile.absolutePath}\" /passive /norestart"
+        } else {
+            "\"${installerFile.absolutePath}\" /S"
+        }
+
+        batFile.writeText(
+            """
+            @echo off
+            timeout /t 2 /nobreak >nul
+            $installCmd
+            if exist "$targetExe" (
+                start "" "$targetExe"
+            )
+            """.trimIndent()
+        )
+        ProcessBuilder("cmd", "/c", "start", "/min", "", batFile.absolutePath).start()
+        kotlinx.coroutines.delay(400L)
+        exitProcess(0)
+    }
+
+    private suspend fun launchLinuxInstallerAndReopen(installerFile: File): Unit = withContext(Dispatchers.IO) {
+        val currentCmd = ProcessHandle.current().info().command().orElse("/opt/glassbeat/bin/GlassBeat")
+        val shFile = File(System.getProperty("java.io.tmpdir"), "glassbeat_apply_update_linux.sh")
+        shFile.writeText(
+            """
+            #!/usr/bin/env bash
+            sleep 2
+            if command -v pkexec >/dev/null 2>&1; then
+                if [[ "${installerFile.name}" == *.deb ]]; then
+                    pkexec dpkg -i "${installerFile.absolutePath}"
+                elif [[ "${installerFile.name}" == *.rpm ]]; then
+                    pkexec rpm -Uvh "${installerFile.absolutePath}"
+                fi
+            else
+                xdg-open "${installerFile.absolutePath}"
+            fi
+            if [[ -x "$currentCmd" ]]; then
+                nohup "$currentCmd" >/dev/null 2>&1 &
+            elif [[ -x "/opt/glassbeat/bin/GlassBeat" ]]; then
+                nohup "/opt/glassbeat/bin/GlassBeat" >/dev/null 2>&1 &
+            fi
+            """.trimIndent()
+        )
+        shFile.setExecutable(true)
+        ProcessBuilder("/bin/bash", "-c", "nohup \"${shFile.absolutePath}\" >/dev/null 2>&1 &").start()
         kotlinx.coroutines.delay(400L)
         exitProcess(0)
     }
@@ -341,8 +409,7 @@ object AppUpdater {
             """.trimIndent()
         )
         scriptFile.setExecutable(true)
-        ProcessBuilder("/bin/bash", "-c", "nohup \"${scriptFile.absolutePath}\" >/dev/null 2>&1 &")
-            .start()
+        ProcessBuilder("/bin/bash", "-c", "nohup \"${scriptFile.absolutePath}\" >/dev/null 2>&1 &").start()
         kotlinx.coroutines.delay(400L)
         exitProcess(0)
     }

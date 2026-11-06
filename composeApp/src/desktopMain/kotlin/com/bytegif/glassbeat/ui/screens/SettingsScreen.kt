@@ -375,7 +375,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
                 Spacer(Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "GlassBeat for macOS",
+                        text = "GlassBeat for ${com.bytegif.glassbeat.util.PlatformUtils.osDisplayName}",
                         color = colors.onSurface,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 15.sp

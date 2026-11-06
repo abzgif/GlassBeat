@@ -56,10 +56,17 @@ compose.desktop {
         )
 
         nativeDistributions {
-            targetFormats(TargetFormat.Dmg, TargetFormat.Pkg)
+            targetFormats(
+                TargetFormat.Dmg,
+                TargetFormat.Pkg,
+                TargetFormat.Msi,
+                TargetFormat.Exe,
+                TargetFormat.Deb,
+                TargetFormat.Rpm
+            )
             packageName = "GlassBeat"
-            packageVersion = "1.1.6"
-            description = "GlassBeat Music Player for macOS"
+            packageVersion = "1.1.7"
+            description = "GlassBeat Music Player for Desktop (macOS, Windows, Linux)"
             vendor = "ByteGif"
             modules("java.sql", "java.desktop", "jdk.unsupported")
 
@@ -67,8 +74,25 @@ compose.desktop {
                 bundleID = "com.bytegif.glassbeat.macos"
                 dockName = "GlassBeat"
                 minimumSystemVersion = "12.0"
-                packageBuildVersion = "19"
+                packageBuildVersion = "20"
                 iconFile.set(project.file("src/desktopMain/resources/GlassBeat.icns"))
+            }
+
+            windows {
+                menuGroup = "GlassBeat"
+                shortcut = true
+                perUserInstall = true
+                upgradeUuid = "8f4e3b1a-7c9d-4e2f-9a1b-3c5d7e9f1a2b"
+                iconFile.set(project.file("src/desktopMain/resources/GlassBeat.ico"))
+            }
+
+            linux {
+                packageName = "glassbeat"
+                debMaintainer = "support@bytegif.com"
+                menuGroup = "AudioVideo;Audio;Player;"
+                appCategory = "AudioVideo"
+                shortcut = true
+                iconFile.set(project.file("src/desktopMain/resources/glassbeat_dock_icon.png"))
             }
         }
     }

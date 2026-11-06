@@ -392,7 +392,10 @@ fun SongContextMenuDialog(
             MenuOptionRow(Icons.Default.PlaylistAdd, "Add to Playlist") { onDismiss(); onAddToPlaylist() }
             MenuOptionRow(Icons.Default.Edit, "Edit Metadata Tags") { onDismiss(); onEditMetadata() }
             MenuOptionRow(Icons.Default.Info, "Song Info") { onDismiss(); onShowInfo() }
-            MenuOptionRow(Icons.Default.FolderOpen, "Reveal in Finder") { onRevealInFinder(); onDismiss() }
+            MenuOptionRow(
+                Icons.Default.FolderOpen,
+                com.bytegif.glassbeat.util.PlatformUtils.revealInFileManagerLabel
+            ) { onRevealInFinder(); onDismiss() }
             MenuOptionRow(
                 icon = Icons.Default.Delete,
                 label = "Delete from Device",
