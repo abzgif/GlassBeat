@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "GlassBeat_macOS"
+rootProject.name = "GlassBeat"
 include(":composeApp")

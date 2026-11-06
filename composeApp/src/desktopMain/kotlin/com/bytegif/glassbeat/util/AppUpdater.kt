@@ -57,7 +57,7 @@ sealed class UpdateCheckState {
 }
 
 /**
- * Cross-platform OTA Updater for GlassBeat Desktop (https://github.com/abzgif/mac-glassbeat).
+ * Cross-platform OTA Updater for GlassBeat Desktop (https://github.com/abzgif/GlassBeat).
  * Supports macOS (.dmg / .zip), Windows (.msi / .exe), and Linux (.deb / .rpm),
  * automatically installing and reopening the updated application.
  */
@@ -66,7 +66,7 @@ object AppUpdater {
     const val CURRENT_VERSION = "1.1.7"
     const val CURRENT_VERSION_CODE = 20
     const val GITHUB_REPO_OWNER = "abzgif"
-    const val GITHUB_REPO_NAME = "mac-glassbeat"
+    const val GITHUB_REPO_NAME = "GlassBeat"
     const val GITHUB_REPO_URL = "https://github.com/$GITHUB_REPO_OWNER/$GITHUB_REPO_NAME"
     private const val LATEST_RELEASE_API = "https://api.github.com/repos/$GITHUB_REPO_OWNER/$GITHUB_REPO_NAME/releases/latest"
     private const val ALL_RELEASES_API = "https://api.github.com/repos/$GITHUB_REPO_OWNER/$GITHUB_REPO_NAME/releases"

@@ -546,7 +546,7 @@ private fun SoftwareUpdateModal(
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        text = "Connecting to github.com/abzgif/mac-glassbeat",
+                        text = "Connecting to github.com/${AppUpdater.GITHUB_REPO_OWNER}/${AppUpdater.GITHUB_REPO_NAME}",
                         color = colors.onSurfaceVariant,
                         fontSize = 12.sp
                     )
