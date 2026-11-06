@@ -180,6 +180,54 @@ object AudioRepository {
         )
     }
 
+    fun isSupportedAudioFile(file: File): Boolean {
+        return file.isFile && file.extension.lowercase() in SUPPORTED_EXTENSIONS
+    }
+
+    suspend fun resolveExternalFilesToQueue(inputFiles: List<File>): Pair<List<AudioItem>, Int> = withContext(Dispatchers.IO) {
+        val explicitFiles = ArrayList<File>()
+        for (item in inputFiles) {
+            if (!item.exists()) continue
+            if (item.isDirectory) {
+                val collected = LinkedHashSet<File>()
+                collectAudioFiles(item, emptySet(), collected)
+                explicitFiles.addAll(collected)
+            } else if (isSupportedAudioFile(item)) {
+                explicitFiles.add(item)
+            }
+        }
+        if (explicitFiles.isEmpty()) return@withContext emptyList<AudioItem>() to 0
+
+        // If the user opened a single audio file from Finder, load sibling audio files in the same folder
+        // so Previous/Next navigation works seamlessly while starting playback at the clicked file.
+        if (explicitFiles.size == 1) {
+            val targetFile = explicitFiles.first().canonicalFile
+            val targetItem = parseAudioItem(targetFile) ?: return@withContext emptyList<AudioItem>() to 0
+            val parentDir = targetFile.parentFile
+            val siblingItems = if (parentDir != null && parentDir.isDirectory) {
+                parentDir.listFiles()
+                    ?.filter { !it.name.startsWith(".") && isSupportedAudioFile(it) }
+                    ?.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+                    ?.mapNotNull { file ->
+                        if (file.canonicalFile == targetFile) targetItem else parseAudioItem(file)
+                    }
+                    .orEmpty()
+            } else {
+                emptyList()
+            }
+            if (siblingItems.isNotEmpty()) {
+                val startIdx = siblingItems.indexOfFirst {
+                    File(it.data).canonicalPath == targetFile.canonicalPath
+                }.coerceAtLeast(0)
+                return@withContext siblingItems to startIdx
+            }
+            return@withContext listOf(targetItem) to 0
+        }
+
+        val parsedItems = explicitFiles.mapNotNull { parseAudioItem(it) }
+        parsedItems to 0
+    }
+
     suspend fun getAudioFileById(id: Long): AudioItem? = withContext(Dispatchers.IO) {
         getAllAudioFiles().firstOrNull { it.id == id }
     }

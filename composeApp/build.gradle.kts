@@ -65,7 +65,7 @@ compose.desktop {
                 TargetFormat.Rpm
             )
             packageName = "GlassBeat"
-            packageVersion = "1.1.7"
+            packageVersion = "1.1.8"
             description = "GlassBeat Music Player for Desktop (macOS, Windows, Linux)"
             vendor = "ByteGif"
             modules("java.sql", "java.desktop", "jdk.unsupported")
@@ -74,8 +74,47 @@ compose.desktop {
                 bundleID = "com.bytegif.glassbeat.macos"
                 dockName = "GlassBeat"
                 minimumSystemVersion = "12.0"
-                packageBuildVersion = "20"
+                packageBuildVersion = "21"
                 iconFile.set(project.file("src/desktopMain/resources/GlassBeat.icns"))
+                infoPlist {
+                    extraKeysRawXml = """
+                        <key>CFBundleDocumentTypes</key>
+                        <array>
+                            <dict>
+                                <key>CFBundleTypeName</key>
+                                <string>Audio File</string>
+                                <key>CFBundleTypeRole</key>
+                                <string>Viewer</string>
+                                <key>LSHandlerRank</key>
+                                <string>Alternate</string>
+                                <key>CFBundleTypeIconFile</key>
+                                <string>GlassBeat.icns</string>
+                                <key>CFBundleTypeExtensions</key>
+                                <array>
+                                    <string>mp3</string>
+                                    <string>flac</string>
+                                    <string>m4a</string>
+                                    <string>wav</string>
+                                    <string>ogg</string>
+                                    <string>opus</string>
+                                    <string>aac</string>
+                                    <string>aiff</string>
+                                    <string>aif</string>
+                                </array>
+                                <key>LSItemContentTypes</key>
+                                <array>
+                                    <string>public.audio</string>
+                                    <string>public.mp3</string>
+                                    <string>public.mpeg-4-audio</string>
+                                    <string>org.xiph.flac</string>
+                                    <string>org.xiph.ogg-audio</string>
+                                    <string>com.microsoft.waveform-audio</string>
+                                    <string>public.aiff-audio</string>
+                                </array>
+                            </dict>
+                        </array>
+                    """.trimIndent()
+                }
             }
 
             windows {

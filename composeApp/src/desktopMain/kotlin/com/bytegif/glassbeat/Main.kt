@@ -79,12 +79,66 @@ import com.bytegif.glassbeat.ui.theme.glassPill
 import com.bytegif.glassbeat.ui.theme.loadGlassBeatDockIconBitmap
 import com.bytegif.glassbeat.ui.theme.loadGlassBeatLogoBitmap
 import com.bytegif.glassbeat.ui.theme.rememberMainBlurRadius
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import java.awt.Desktop
 import java.awt.Dimension
 import java.awt.Taskbar
+import java.awt.datatransfer.DataFlavor
+import java.awt.dnd.DnDConstants
+import java.awt.dnd.DropTarget
+import java.awt.dnd.DropTargetAdapter
+import java.awt.dnd.DropTargetDropEvent
+import java.io.File
+import java.net.URI
 import javax.imageio.ImageIO
 
-fun main() {
-    // Set macOS Dock Icon to the Apple HIG-proportioned GlassBeat Dock icon (80.5% squircle with standard margin)
+private val externalOpenFilesFlow = MutableSharedFlow<List<File>>(
+    replay = 1,
+    extraBufferCapacity = 8,
+    onBufferOverflow = BufferOverflow.DROP_OLDEST
+)
+
+private fun dispatchExternalFiles(files: List<File>) {
+    val valid = files.filter { it.exists() }
+    if (valid.isNotEmpty()) {
+        DesktopAudioPlayer.markExternalPlaybackTriggered()
+        externalOpenFilesFlow.tryEmit(valid)
+    }
+}
+
+fun main(args: Array<String>) {
+    // 1. Register macOS Finder "Open With" / Dock drop handler immediately at process startup
+    // so cold-launch kAEOpenDocuments AppleEvents are captured before the Compose window finishes initializing.
+    try {
+        if (Desktop.isDesktopSupported()) {
+            val desktop = Desktop.getDesktop()
+            if (desktop.isSupported(Desktop.Action.APP_OPEN_FILE)) {
+                desktop.setOpenFileHandler { event ->
+                    val files = event.files.orEmpty()
+                    dispatchExternalFiles(files)
+                }
+            }
+        }
+    } catch (_: Exception) {
+    }
+
+    // 2. Parse command-line file arguments (Windows, Linux, or macOS CLI `open -a GlassBeat --args <file>`)
+    if (args.isNotEmpty()) {
+        val cliFiles = args.mapNotNull { rawArg ->
+            val trimmed = rawArg.trim()
+            if (trimmed.isEmpty() || trimmed.startsWith("-psn_") || trimmed.startsWith("--")) {
+                null
+            } else {
+                runCatching {
+                    if (trimmed.startsWith("file://")) File(URI(trimmed)) else File(trimmed)
+                }.getOrNull()?.takeIf { it.exists() }
+            }
+        }
+        dispatchExternalFiles(cliFiles)
+    }
+
+    // 3. Set macOS Dock Icon to the Apple HIG-proportioned GlassBeat Dock icon (80.5% squircle with standard margin)
     try {
         if (Taskbar.isTaskbarSupported()) {
             val taskbar = Taskbar.getTaskbar()
@@ -152,6 +206,51 @@ fun main() {
                     "apple.awt.windowAppearance",
                     if (prefs.isDarkMode) "NSAppearanceNameVibrantDark" else "NSAppearanceNameVibrantLight"
                 )
+            }
+
+            // Handle Finder "Open With", CLI args, and Drag-and-Drop onto the window
+            LaunchedEffect(viewModel) {
+                // Attach AWT DropTarget so dragging audio files from Finder into the window plays them immediately
+                try {
+                    window.dropTarget = DropTarget(
+                        window,
+                        DnDConstants.ACTION_COPY,
+                        object : DropTargetAdapter() {
+                            override fun drop(dtde: DropTargetDropEvent) {
+                                try {
+                                    if (dtde.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+                                        dtde.acceptDrop(DnDConstants.ACTION_COPY)
+                                        @Suppress("UNCHECKED_CAST")
+                                        val dropped = dtde.transferable.getTransferData(DataFlavor.javaFileListFlavor) as? List<File>
+                                        if (!dropped.isNullOrEmpty()) {
+                                            dispatchExternalFiles(dropped)
+                                        }
+                                        dtde.dropComplete(true)
+                                    } else {
+                                        dtde.rejectDrop()
+                                    }
+                                } catch (_: Exception) {
+                                    dtde.dropComplete(false)
+                                }
+                            }
+                        },
+                        true
+                    )
+                } catch (_: Exception) {
+                }
+
+                externalOpenFilesFlow.collect { files ->
+                    if (files.isNotEmpty()) {
+                        viewModel.openExternalFiles(files)
+                        try {
+                            window.toFront()
+                            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.APP_REQUEST_FOREGROUND)) {
+                                Desktop.getDesktop().requestForeground(true)
+                            }
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
             }
 
             GlassBeatTheme(isDarkMode = prefs.isDarkMode) {

@@ -28,7 +28,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.awt.Desktop
 import java.io.File
 import kotlin.math.abs
 
@@ -596,6 +595,20 @@ class MainViewModel {
             AppStorage.clearAllHistory()
             _historySelectedSongIds.value = emptySet()
             showToast("Listen history cleared")
+        }
+    }
+
+    fun openExternalFiles(files: List<File>) {
+        if (files.isEmpty()) return
+        DesktopAudioPlayer.markExternalPlaybackTriggered()
+        scope.launch {
+            val (songs, startIndex) = AudioRepository.resolveExternalFilesToQueue(files)
+            if (songs.isNotEmpty()) {
+                DesktopAudioPlayer.playSongs(songs, startIndex, 0L)
+                _isNowPlayingExpanded.value = true
+            } else {
+                showToast("Unsupported or unreadable audio file")
+            }
         }
     }
 }

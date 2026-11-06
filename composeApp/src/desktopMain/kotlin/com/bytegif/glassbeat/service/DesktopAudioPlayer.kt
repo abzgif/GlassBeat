@@ -90,12 +90,19 @@ object DesktopAudioPlayer {
     @Volatile
     private var useJvmFallback = false
 
+    @Volatile
+    private var externalPlaybackTriggered = false
+
     init {
         SleepTimerManager.onTimerExpired = {
             pause()
         }
         startNativeHelperIfAvailable()
         startPositionPoller()
+    }
+
+    fun markExternalPlaybackTriggered() {
+        externalPlaybackTriggered = true
     }
 
     private fun startNativeHelperIfAvailable() {
@@ -248,12 +255,12 @@ object DesktopAudioPlayer {
     }
 
     fun restorePlaybackState() {
-        if (_queue.value.isNotEmpty()) return
+        if (_queue.value.isNotEmpty() || externalPlaybackTriggered) return
         scope.launch {
             val prefs = AppStorage.state.value
-            if (prefs.savedQueueIds.isEmpty()) return@launch
+            if (prefs.savedQueueIds.isEmpty() || externalPlaybackTriggered) return@launch
             val songs = AudioRepository.getAudioFilesByIds(prefs.savedQueueIds)
-            if (songs.isNotEmpty()) {
+            if (songs.isNotEmpty() && _queue.value.isEmpty() && !externalPlaybackTriggered) {
                 val idx = prefs.savedCurrentIndex.coerceIn(0, songs.size - 1)
                 val pos = prefs.savedCurrentPositionMs.coerceAtLeast(0L)
                 _queue.value = songs
