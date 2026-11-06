@@ -216,6 +216,7 @@ fun GlassModalOverlay(
 }
 
 private var cachedLogoBitmap: ImageBitmap? = null
+private var cachedDockIconBitmap: ImageBitmap? = null
 
 fun loadGlassBeatLogoBitmap(): ImageBitmap? {
     cachedLogoBitmap?.let { return it }
@@ -229,6 +230,21 @@ fun loadGlassBeatLogoBitmap(): ImageBitmap? {
         } else null
     } catch (_: Exception) {
         null
+    }
+}
+
+fun loadGlassBeatDockIconBitmap(): ImageBitmap? {
+    cachedDockIconBitmap?.let { return it }
+    return try {
+        val stream = GlassTheme::class.java.getResourceAsStream("/glassbeat_dock_icon.png")
+        if (stream != null) {
+            val bytes = stream.use { it.readBytes() }
+            val bmp = Image.makeFromEncoded(bytes).toComposeImageBitmap()
+            cachedDockIconBitmap = bmp
+            bmp
+        } else loadGlassBeatLogoBitmap()
+    } catch (_: Exception) {
+        loadGlassBeatLogoBitmap()
     }
 }
 

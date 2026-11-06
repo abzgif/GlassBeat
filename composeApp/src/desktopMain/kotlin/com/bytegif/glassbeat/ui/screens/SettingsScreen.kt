@@ -387,7 +387,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
                     )
                 }
                 Text(
-                    text = "v${AppUpdater.CURRENT_VERSION} (18)",
+                    text = "v${AppUpdater.CURRENT_VERSION} (${AppUpdater.CURRENT_VERSION_CODE})",
                     color = colors.onSurfaceVariant,
                     fontWeight = FontWeight.Medium,
                     fontSize = 13.sp

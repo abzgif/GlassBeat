@@ -48,19 +48,17 @@ compose.desktop {
     application {
         mainClass = "com.bytegif.glassbeat.MainKt"
 
-        val iconPath = project.file("src/desktopMain/resources/GlassBeat.icns").absolutePath
         jvmArgs += listOf(
             "-Dapple.awt.application.name=GlassBeat",
             "-Dapple.awt.application.appearance=system",
             "-Dsun.java2d.metal=true",
-            "-Xdock:name=GlassBeat",
-            "-Xdock:icon=$iconPath"
+            "-Xdock:name=GlassBeat"
         )
 
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Pkg)
             packageName = "GlassBeat"
-            packageVersion = "1.1.5"
+            packageVersion = "1.1.6"
             description = "GlassBeat Music Player for macOS"
             vendor = "ByteGif"
             modules("java.sql", "java.desktop", "jdk.unsupported")
@@ -69,6 +67,7 @@ compose.desktop {
                 bundleID = "com.bytegif.glassbeat.macos"
                 dockName = "GlassBeat"
                 minimumSystemVersion = "12.0"
+                packageBuildVersion = "19"
                 iconFile.set(project.file("src/desktopMain/resources/GlassBeat.icns"))
             }
         }

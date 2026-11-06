@@ -63,7 +63,8 @@ sealed class UpdateCheckState {
  */
 object AppUpdater {
 
-    const val CURRENT_VERSION = "1.1.5"
+    const val CURRENT_VERSION = "1.1.6"
+    const val CURRENT_VERSION_CODE = 19
     const val GITHUB_REPO_OWNER = "abzgif"
     const val GITHUB_REPO_NAME = "mac-glassbeat"
     const val GITHUB_REPO_URL = "https://github.com/$GITHUB_REPO_OWNER/$GITHUB_REPO_NAME"

@@ -76,6 +76,7 @@ import com.bytegif.glassbeat.ui.theme.GlassBeatTheme
 import com.bytegif.glassbeat.ui.theme.GlassTheme
 import com.bytegif.glassbeat.ui.theme.glassCard
 import com.bytegif.glassbeat.ui.theme.glassPill
+import com.bytegif.glassbeat.ui.theme.loadGlassBeatDockIconBitmap
 import com.bytegif.glassbeat.ui.theme.loadGlassBeatLogoBitmap
 import com.bytegif.glassbeat.ui.theme.rememberMainBlurRadius
 import java.awt.Dimension
@@ -83,12 +84,13 @@ import java.awt.Taskbar
 import javax.imageio.ImageIO
 
 fun main() {
-    // Set macOS Dock Icon to the official GlassBeat logo
+    // Set macOS Dock Icon to the Apple HIG-proportioned GlassBeat Dock icon (80.5% squircle with standard margin)
     try {
         if (Taskbar.isTaskbarSupported()) {
             val taskbar = Taskbar.getTaskbar()
             if (taskbar.isSupported(Taskbar.Feature.ICON_IMAGE)) {
-                val iconStream = MainViewModel::class.java.getResourceAsStream("/glassbeat_logo.png")
+                val iconStream = MainViewModel::class.java.getResourceAsStream("/glassbeat_dock_icon.png")
+                    ?: MainViewModel::class.java.getResourceAsStream("/glassbeat_logo.png")
                 if (iconStream != null) {
                     val awtImg = iconStream.use { ImageIO.read(it) }
                     if (awtImg != null) {
@@ -103,7 +105,7 @@ fun main() {
     application {
         val viewModel = remember { MainViewModel() }
         val prefs by AppStorage.state.collectAsState()
-        val logoBitmap = remember { loadGlassBeatLogoBitmap() }
+        val dockIconBitmap = remember { loadGlassBeatDockIconBitmap() }
         val windowState = rememberWindowState(
             size = DpSize(1180.dp, 780.dp),
             position = WindowPosition.Aligned(Alignment.Center)
@@ -116,7 +118,7 @@ fun main() {
             },
             state = windowState,
             title = "GlassBeat",
-            icon = logoBitmap?.let { BitmapPainter(it) },
+            icon = dockIconBitmap?.let { BitmapPainter(it) },
             onKeyEvent = { event ->
                 if (event.type == KeyEventType.KeyDown) {
                     when {
