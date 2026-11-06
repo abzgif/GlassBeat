@@ -526,14 +526,21 @@ fun NowPlayingFullOverlay(viewModel: MainViewModel) {
                         // Audio Tech Specs Pill (e.g., FLAC • 1042 kb/s • 44.1 kHz)
                         Box(
                             modifier = Modifier
+                                .height(28.dp)
                                 .glassPill()
-                                .padding(horizontal = 14.dp, vertical = 5.dp)
+                                .padding(horizontal = 16.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = techSpecs.formattedString(),
-                                color = colors.onSurfaceVariant,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
+                                style = TextStyle(
+                                    color = colors.onSurfaceVariant,
+                                    fontSize = 11.sp,
+                                    lineHeight = 11.sp,
+                                    fontFeatureSettings = "tnum",
+                                    fontWeight = FontWeight.SemiBold,
+                                    textAlign = TextAlign.Center
+                                )
                             )
                         }
                     }
@@ -598,9 +605,11 @@ fun NowPlayingFullOverlay(viewModel: MainViewModel) {
                             }
                             Box(
                                 modifier = Modifier
+                                    .height(30.dp)
                                     .glassPill()
                                     .clickable { showSpeedModal = true }
-                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                                    .padding(horizontal = 14.dp),
+                                contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     text = formattedSpeed,
@@ -608,7 +617,9 @@ fun NowPlayingFullOverlay(viewModel: MainViewModel) {
                                         color = if (abs(playbackSpeed - 1.0f) < 0.03f) colors.onSurfaceVariant else colors.accent,
                                         fontWeight = FontWeight.Bold,
                                         fontFeatureSettings = "tnum",
-                                        fontSize = 13.sp
+                                        fontSize = 12.sp,
+                                        lineHeight = 12.sp,
+                                        textAlign = TextAlign.Center
                                     )
                                 )
                             }
