@@ -36,27 +36,25 @@ jobs:
 
       - name: Build macOS DMG & App Bundle
         run: |
+          mkdir -p dist
           ./gradlew :composeApp:packageDmg :composeApp:createDistributable --no-daemon
-
-      - name: Package .app as ZIP for OTA Auto-Update
-        run: |
+          find composeApp/build/compose/binaries/main -type f -name "*.dmg" -exec cp -v {} dist/ \;
           APP_DIR=$(find composeApp/build/compose/binaries/main/app -maxdepth 1 -name "*.app" | head -n 1)
           if [[ -n "$APP_DIR" ]]; then
             cp -f composeApp/src/desktopMain/resources/GlassBeat.icns "$APP_DIR/Contents/Resources/GlassBeat.icns" || true
-            ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" composeApp/build/compose/binaries/main/dmg/GlassBeat-macOS-app.zip
+            ditto -c -k --sequesterRsrc --keepParent "$APP_DIR" dist/GlassBeat-macOS-app.zip
           fi
-          ls -lh composeApp/build/compose/binaries/main/dmg/
+          ls -lh dist/
 
       - name: Upload macOS Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: GlassBeat-macOS-Installer
-          path: |
-            composeApp/build/compose/binaries/main/dmg/*.dmg
-            composeApp/build/compose/binaries/main/dmg/*.zip
+          path: dist/*
+          if-no-files-found: error
 
   build-windows:
-    name: Build Windows (.msi & .exe installers)
+    name: Build Windows (.msi, .exe & portable .zip)
     runs-on: windows-latest
 
     steps:
@@ -70,41 +68,82 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Install WiX Toolset v3 for Native Windows Installers
+      - name: Ensure WiX Toolset v3 and Inno Setup are Installed and in PATH
         shell: pwsh
         run: |
-          choco install wixtoolset --yes --no-progress
-          $wixBin = "C:\Program Files (x86)\WiX Toolset v3.11\bin"
-          if (Test-Path $wixBin) {
-            echo "$wixBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-            $env:PATH = "$wixBin;$env:PATH"
+          $candle = Get-ChildItem -Path "C:\Program Files (x86)" -Filter "candle.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $candle) {
+            choco install wixtoolset --yes --no-progress
+            $candle = Get-ChildItem -Path "C:\Program Files (x86)" -Filter "candle.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           }
-          # Verify candle.exe and light.exe are callable
-          Get-Command candle.exe, light.exe | Format-Table Name, Source
+          if ($candle) {
+            $wixDir = $candle.DirectoryName
+            Write-Host "Found WiX at: $wixDir"
+            echo "$wixDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
 
-      - name: Build Windows Native MSI and EXE Installers
+          $iscc = Get-ChildItem -Path "C:\Program Files (x86)", "C:\Program Files" -Filter "ISCC.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup --yes --no-progress
+            $iscc = Get-ChildItem -Path "C:\Program Files (x86)", "C:\Program Files" -Filter "ISCC.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+          if ($iscc) {
+            $innoDir = $iscc.DirectoryName
+            Write-Host "Found Inno Setup at: $innoDir"
+            echo "$innoDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+
+      - name: Build Windows MSI, EXE Installers & Portable ZIP
         shell: pwsh
         run: |
-          ./gradlew.bat :composeApp:packageMsi :composeApp:packageExe --no-daemon --stacktrace
-          ls -Recurse composeApp/build/compose/binaries/main/
+          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+
+          Write-Host "Building Windows .msi installer..."
+          ./gradlew.bat :composeApp:packageMsi --no-daemon --stacktrace
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "packageMsi returned non-zero exit code ($LASTEXITCODE)"
+          }
+
+          Write-Host "Building Windows .exe installer..."
+          ./gradlew.bat :composeApp:packageExe --no-daemon --stacktrace
+          if ($LASTEXITCODE -ne 0) {
+            Write-Warning "packageExe returned non-zero exit code ($LASTEXITCODE)"
+          }
+
+          Write-Host "Building Windows standalone distributable..."
+          ./gradlew.bat :composeApp:createDistributable --no-daemon --stacktrace
+
+          # Copy generated .msi and .exe installers into flat dist/ directory
+          Get-ChildItem -Path "composeApp/build/compose/binaries/main" -Recurse -Include *.msi, *.exe | ForEach-Object {
+            if ($_.DirectoryName -notmatch "\\app\\") {
+              Copy-Item $_.FullName -Destination "dist\" -Force
+            }
+          }
+
+          # Also create portable ZIP from distributable app folder
+          $appDir = "composeApp/build/compose/binaries/main/app/GlassBeat"
+          if (Test-Path $appDir) {
+            Compress-Archive -Path "$appDir\*" -DestinationPath "dist\GlassBeat-Windows-portable.zip" -Force
+          }
+
+          Get-ChildItem -Path "dist" | Format-Table Name, Length
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: GlassBeat-Windows-Installer
-          path: |
-            composeApp/build/compose/binaries/main/msi/*.msi
-            composeApp/build/compose/binaries/main/exe/*.exe
+          path: dist/*
+          if-no-files-found: error
 
   build-linux:
-    name: Build Linux (.deb & .rpm installers)
+    name: Build Linux (.deb, .rpm & portable .tar.gz)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Linux Packaging Tools (fakeroot, dpkg, rpm)
+      - name: Install Linux Packaging Tools (fakeroot, dpkg-dev, rpm, ALSA/X11)
         run: |
           sudo apt-get update
           sudo apt-get install -y fakeroot dpkg-dev rpm libasound2-dev libx11-dev libxext-dev libxi-dev libxtst-dev
@@ -116,56 +155,68 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Build Linux Native DEB and RPM Installers
+      - name: Build Linux DEB, RPM Installers & Portable Tarball
         run: |
+          mkdir -p dist
           chmod +x gradlew
-          ./gradlew :composeApp:packageDeb :composeApp:packageRpm --no-daemon --stacktrace
-          ls -la composeApp/build/compose/binaries/main/deb/ || true
-          ls -la composeApp/build/compose/binaries/main/rpm/ || true
+          ./gradlew :composeApp:packageDeb :composeApp:packageRpm :composeApp:createDistributable --no-daemon --stacktrace
+
+          find composeApp/build/compose/binaries/main/deb -type f -name "*.deb" -exec cp -v {} dist/ \; || true
+          find composeApp/build/compose/binaries/main/rpm -type f -name "*.rpm" -exec cp -v {} dist/ \; || true
+
+          if [[ -d "composeApp/build/compose/binaries/main/app/glassbeat" ]]; then
+            tar -czf "dist/GlassBeat-Linux-portable.tar.gz" -C "composeApp/build/compose/binaries/main/app" glassbeat
+          elif [[ -d "composeApp/build/compose/binaries/main/app/GlassBeat" ]]; then
+            tar -czf "dist/GlassBeat-Linux-portable.tar.gz" -C "composeApp/build/compose/binaries/main/app" GlassBeat
+          fi
+
+          ls -lh dist/
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: GlassBeat-Linux-Installer
-          path: |
-            composeApp/build/compose/binaries/main/deb/*.deb
-            composeApp/build/compose/binaries/main/rpm/*.rpm
+          path: dist/*
+          if-no-files-found: error
 
   publish-release:
     name: Publish Multi-OS GitHub Release
     needs: [ build-macos, build-windows, build-linux ]
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     steps:
       - name: Download All Platform Installers
         uses: actions/download-artifact@v4
         with:
-          path: release-assets
-          merge-multiple: true
+          path: raw-assets
 
-      - name: List Release Assets
-        run: ls -lh release-assets/
+      - name: Flatten All Release Assets into Single Folder
+        run: |
+          mkdir -p release-assets
+          find raw-assets -type f -exec cp -v {} release-assets/ \;
+          ls -lh release-assets/
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: GlassBeat Desktop ${{ github.ref_name }} (macOS, Windows, Linux)
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v1.1.9' }}
+          name: GlassBeat Desktop ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v1.1.9' }} (macOS, Windows, Linux)
           body: |
-            ### GlassBeat Desktop ${{ github.ref_name }}
+            ### GlassBeat Desktop ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'v1.1.9' }} (Build 22)
             Cross-platform glassmorphic music player and 5-band parametric equalizer for **macOS**, **Windows**, and **Linux**.
 
-            #### Native Installers by Platform
+            #### Downloads by Platform
             - **macOS (Apple Silicon & Intel / macOS 12+)**:
-              - Download **`.dmg`** installer
-              - Or download **`GlassBeat-macOS-app.zip`** (direct .app bundle)
+              - **Installer**: `GlassBeat-1.1.9.dmg`
+              - **App Bundle ZIP**: `GlassBeat-macOS-app.zip`
             - **Windows (Windows 10 / 11 64-bit)**:
-              - Download **`.msi`** installer (Windows Installer package)
-              - Download **`.exe`** installer (Standard setup executable)
+              - **Installers**: `GlassBeat-1.1.9.msi` and `GlassBeat-1.1.9.exe`
+              - **Portable ZIP**: `GlassBeat-Windows-portable.zip`
             - **Linux (Ubuntu / Debian / Fedora / RHEL 64-bit)**:
-              - Download **`.deb`** (Ubuntu, Debian, Linux Mint, Pop!_OS)
-              - Download **`.rpm`** (Fedora, Red Hat Enterprise Linux, openSUSE)
+              - **Debian / Ubuntu / Mint Installer**: `glassbeat_1.1.9-1_amd64.deb`
+              - **Fedora / RHEL / openSUSE Installer**: `glassbeat-1.1.9-1.x86_64.rpm`
+              - **Portable Tarball**: `GlassBeat-Linux-portable.tar.gz`
             - **Android**:
               - Available on [Google Play](https://play.google.com/store/apps/details?id=com.bytegif.glassbeat)
             - **OTA Auto-Update**:

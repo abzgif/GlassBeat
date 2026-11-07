@@ -65,7 +65,7 @@ compose.desktop {
                 TargetFormat.Rpm
             )
             packageName = "GlassBeat"
-            packageVersion = "1.1.8"
+            packageVersion = "1.1.9"
             description = "GlassBeat Music Player for Desktop (macOS, Windows, Linux)"
             vendor = "ByteGif"
             modules("java.sql", "java.desktop", "jdk.unsupported")
@@ -74,7 +74,7 @@ compose.desktop {
                 bundleID = "com.bytegif.glassbeat.macos"
                 dockName = "GlassBeat"
                 minimumSystemVersion = "12.0"
-                packageBuildVersion = "21"
+                packageBuildVersion = "22"
                 iconFile.set(project.file("src/desktopMain/resources/GlassBeat.icns"))
                 infoPlist {
                     extraKeysRawXml = """
