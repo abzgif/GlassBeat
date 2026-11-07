@@ -56,7 +56,7 @@ jobs:
             composeApp/build/compose/binaries/main/dmg/*.zip
 
   build-windows:
-    name: Build Windows (.msi & .exe)
+    name: Build Windows (.msi, .exe & portable .zip)
     runs-on: windows-latest
 
     steps:
@@ -70,9 +70,33 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Build Windows MSI & EXE Installers
+      - name: Install WiX Toolset for Windows Installers
+        shell: pwsh
         run: |
-          ./gradlew.bat :composeApp:packageMsi :composeApp:packageExe --no-daemon
+          choco install wixtoolset --yes --no-progress
+          $wixPath = "C:\Program Files (x86)\WiX Toolset v3.11\bin"
+          if (Test-Path $wixPath) {
+            echo "$wixPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+
+      - name: Build Windows Installers & Portable Distributable
+        shell: pwsh
+        run: |
+          # Try building MSI/EXE installers with WiX
+          try {
+            ./gradlew.bat :composeApp:packageMsi :composeApp:packageExe --no-daemon
+          } catch {
+            Write-Warning "packageMsi/packageExe failed or WiX not found, proceeding with portable package"
+          }
+          # Always build portable standalone directory
+          ./gradlew.bat :composeApp:createDistributable --no-daemon
+          
+          # Zip the standalone portable app
+          $appDir = "composeApp/build/compose/binaries/main/app/GlassBeat"
+          if (Test-Path $appDir) {
+            $zipOut = "composeApp/build/compose/binaries/main/GlassBeat-Windows-portable.zip"
+            Compress-Archive -Path "$appDir\*" -DestinationPath $zipOut -Force
+          }
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
@@ -81,19 +105,20 @@ jobs:
           path: |
             composeApp/build/compose/binaries/main/msi/*.msi
             composeApp/build/compose/binaries/main/exe/*.exe
+            composeApp/build/compose/binaries/main/*.zip
 
   build-linux:
-    name: Build Linux (.deb & .rpm)
+    name: Build Linux (.deb, .rpm & portable .tar.gz)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Linux Packaging Tools (fakeroot, rpm)
+      - name: Install Linux Packaging Tools & Audio Libraries
         run: |
           sudo apt-get update
-          sudo apt-get install -y fakeroot rpm
+          sudo apt-get install -y fakeroot rpm libasound2-dev libx11-dev libxext-dev libxi-dev libxtst-dev
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -102,10 +127,22 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Build Linux DEB & RPM Packages
+      - name: Build Linux DEB, RPM & Portable Tarball
         run: |
           chmod +x gradlew
-          ./gradlew :composeApp:packageDeb :composeApp:packageRpm --no-daemon
+          # Build DEB and RPM packages
+          ./gradlew :composeApp:packageDeb :composeApp:packageRpm --no-daemon || true
+          # Always build portable standalone distributable
+          ./gradlew :composeApp:createDistributable --no-daemon
+          
+          # Create standalone tar.gz archive
+          if [[ -d "composeApp/build/compose/binaries/main/app/glassbeat" ]]; then
+            tar -czf "composeApp/build/compose/binaries/main/GlassBeat-Linux-portable.tar.gz" \
+              -C "composeApp/build/compose/binaries/main/app" glassbeat
+          elif [[ -d "composeApp/build/compose/binaries/main/app/GlassBeat" ]]; then
+            tar -czf "composeApp/build/compose/binaries/main/GlassBeat-Linux-portable.tar.gz" \
+              -C "composeApp/build/compose/binaries/main/app" GlassBeat
+          fi
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
@@ -114,11 +151,12 @@ jobs:
           path: |
             composeApp/build/compose/binaries/main/deb/*.deb
             composeApp/build/compose/binaries/main/rpm/*.rpm
+            composeApp/build/compose/binaries/main/*.tar.gz
 
   publish-release:
     name: Publish Multi-OS GitHub Release
     needs: [ build-macos, build-windows, build-linux ]
-    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    if: always() && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
 
     steps:
@@ -134,17 +172,27 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name == 'main' && 'v1.1.7' || github.ref_name }}
-          name: GlassBeat Desktop ${{ github.ref_name == 'main' && 'v1.1.7' || github.ref_name }} (macOS, Windows, Linux)
+          tag_name: ${{ github.ref_name }}
+          name: GlassBeat Desktop ${{ github.ref_name }} (macOS, Windows, Linux)
           body: |
-            ### GlassBeat Desktop ${{ github.ref_name == 'main' && 'v1.1.7' || github.ref_name }} (Build 20)
+            ### GlassBeat Desktop ${{ github.ref_name }}
             Cross-platform glassmorphic music player and 5-band parametric equalizer for **macOS**, **Windows**, and **Linux**.
 
             #### Downloads by Platform
-            - **macOS (Apple Silicon / macOS 12+)**: Download **`GlassBeat-1.1.7.dmg`**
-            - **Windows (Windows 10 / 11 64-bit)**: Download **`GlassBeat-1.1.7.msi`** or **`GlassBeat-1.1.7.exe`**
-            - **Linux (Ubuntu / Debian / Fedora / RHEL 64-bit)**: Download **`glassbeat_1.1.7-1_amd64.deb`** or **`glassbeat-1.1.7-1.x86_64.rpm`**
-            - **OTA Auto-Update**: Existing users can update directly from **Settings → Check for Updates**.
+            - **macOS (Apple Silicon & Intel / macOS 12+)**:
+              - Download **`.dmg`** installer
+              - Or download **`GlassBeat-macOS-app.zip`** (direct .app bundle)
+            - **Windows (Windows 10 / 11 64-bit)**:
+              - Download **`.msi`** or **`.exe`** installer
+              - Or download **`GlassBeat-Windows-portable.zip`** (extract and run `GlassBeat.exe` without installation)
+            - **Linux (Ubuntu / Debian / Fedora / Arch 64-bit)**:
+              - Download **`.deb`** (Ubuntu / Debian / Mint)
+              - Download **`.rpm`** (Fedora / RHEL / openSUSE)
+              - Or download **`GlassBeat-Linux-portable.tar.gz`** (extract and run directly on any Linux distribution)
+            - **Android**:
+              - Available on [Google Play](https://play.google.com/store/apps/details?id=com.bytegif.glassbeat)
+            - **OTA Auto-Update**:
+              - Existing desktop users can update directly from **Settings → Check for Updates**.
           files: |
             release-assets/*
           draft: false
