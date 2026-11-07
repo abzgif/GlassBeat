@@ -56,7 +56,7 @@ jobs:
             composeApp/build/compose/binaries/main/dmg/*.zip
 
   build-windows:
-    name: Build Windows (.msi, .exe & portable .zip)
+    name: Build Windows (.msi & .exe installers)
     runs-on: windows-latest
 
     steps:
@@ -70,33 +70,23 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Install WiX Toolset for Windows Installers
+      - name: Install WiX Toolset v3 for Native Windows Installers
         shell: pwsh
         run: |
           choco install wixtoolset --yes --no-progress
-          $wixPath = "C:\Program Files (x86)\WiX Toolset v3.11\bin"
-          if (Test-Path $wixPath) {
-            echo "$wixPath" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          $wixBin = "C:\Program Files (x86)\WiX Toolset v3.11\bin"
+          if (Test-Path $wixBin) {
+            echo "$wixBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+            $env:PATH = "$wixBin;$env:PATH"
           }
+          # Verify candle.exe and light.exe are callable
+          Get-Command candle.exe, light.exe | Format-Table Name, Source
 
-      - name: Build Windows Installers & Portable Distributable
+      - name: Build Windows Native MSI and EXE Installers
         shell: pwsh
         run: |
-          # Try building MSI/EXE installers with WiX
-          try {
-            ./gradlew.bat :composeApp:packageMsi :composeApp:packageExe --no-daemon
-          } catch {
-            Write-Warning "packageMsi/packageExe failed or WiX not found, proceeding with portable package"
-          }
-          # Always build portable standalone directory
-          ./gradlew.bat :composeApp:createDistributable --no-daemon
-          
-          # Zip the standalone portable app
-          $appDir = "composeApp/build/compose/binaries/main/app/GlassBeat"
-          if (Test-Path $appDir) {
-            $zipOut = "composeApp/build/compose/binaries/main/GlassBeat-Windows-portable.zip"
-            Compress-Archive -Path "$appDir\*" -DestinationPath $zipOut -Force
-          }
+          ./gradlew.bat :composeApp:packageMsi :composeApp:packageExe --no-daemon --stacktrace
+          ls -Recurse composeApp/build/compose/binaries/main/
 
       - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
@@ -105,20 +95,19 @@ jobs:
           path: |
             composeApp/build/compose/binaries/main/msi/*.msi
             composeApp/build/compose/binaries/main/exe/*.exe
-            composeApp/build/compose/binaries/main/*.zip
 
   build-linux:
-    name: Build Linux (.deb, .rpm & portable .tar.gz)
+    name: Build Linux (.deb & .rpm installers)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install Linux Packaging Tools & Audio Libraries
+      - name: Install Linux Packaging Tools (fakeroot, dpkg, rpm)
         run: |
           sudo apt-get update
-          sudo apt-get install -y fakeroot rpm libasound2-dev libx11-dev libxext-dev libxi-dev libxtst-dev
+          sudo apt-get install -y fakeroot dpkg-dev rpm libasound2-dev libx11-dev libxext-dev libxi-dev libxtst-dev
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -127,22 +116,11 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Build Linux DEB, RPM & Portable Tarball
+      - name: Build Linux Native DEB and RPM Installers
         run: |
           chmod +x gradlew
-          # Build DEB and RPM packages
-          ./gradlew :composeApp:packageDeb :composeApp:packageRpm --no-daemon || true
-          # Always build portable standalone distributable
-          ./gradlew :composeApp:createDistributable --no-daemon
-          
-          # Create standalone tar.gz archive
-          if [[ -d "composeApp/build/compose/binaries/main/app/glassbeat" ]]; then
-            tar -czf "composeApp/build/compose/binaries/main/GlassBeat-Linux-portable.tar.gz" \
-              -C "composeApp/build/compose/binaries/main/app" glassbeat
-          elif [[ -d "composeApp/build/compose/binaries/main/app/GlassBeat" ]]; then
-            tar -czf "composeApp/build/compose/binaries/main/GlassBeat-Linux-portable.tar.gz" \
-              -C "composeApp/build/compose/binaries/main/app" GlassBeat
-          fi
+          ./gradlew :composeApp:packageDeb :composeApp:packageRpm --no-daemon --stacktrace
+          ls -Recurse composeApp/build/compose/binaries/main/
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
@@ -151,12 +129,11 @@ jobs:
           path: |
             composeApp/build/compose/binaries/main/deb/*.deb
             composeApp/build/compose/binaries/main/rpm/*.rpm
-            composeApp/build/compose/binaries/main/*.tar.gz
 
   publish-release:
     name: Publish Multi-OS GitHub Release
     needs: [ build-macos, build-windows, build-linux ]
-    if: always() && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
 
     steps:
@@ -178,17 +155,16 @@ jobs:
             ### GlassBeat Desktop ${{ github.ref_name }}
             Cross-platform glassmorphic music player and 5-band parametric equalizer for **macOS**, **Windows**, and **Linux**.
 
-            #### Downloads by Platform
+            #### Native Installers by Platform
             - **macOS (Apple Silicon & Intel / macOS 12+)**:
               - Download **`.dmg`** installer
               - Or download **`GlassBeat-macOS-app.zip`** (direct .app bundle)
             - **Windows (Windows 10 / 11 64-bit)**:
-              - Download **`.msi`** or **`.exe`** installer
-              - Or download **`GlassBeat-Windows-portable.zip`** (extract and run `GlassBeat.exe` without installation)
-            - **Linux (Ubuntu / Debian / Fedora / Arch 64-bit)**:
-              - Download **`.deb`** (Ubuntu / Debian / Mint)
-              - Download **`.rpm`** (Fedora / RHEL / openSUSE)
-              - Or download **`GlassBeat-Linux-portable.tar.gz`** (extract and run directly on any Linux distribution)
+              - Download **`.msi`** installer (Windows Installer package)
+              - Download **`.exe`** installer (Standard setup executable)
+            - **Linux (Ubuntu / Debian / Fedora / RHEL 64-bit)**:
+              - Download **`.deb`** (Ubuntu, Debian, Linux Mint, Pop!_OS)
+              - Download **`.rpm`** (Fedora, Red Hat Enterprise Linux, openSUSE)
             - **Android**:
               - Available on [Google Play](https://play.google.com/store/apps/details?id=com.bytegif.glassbeat)
             - **OTA Auto-Update**:
