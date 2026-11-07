@@ -120,7 +120,8 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew :composeApp:packageDeb :composeApp:packageRpm --no-daemon --stacktrace
-          ls -Recurse composeApp/build/compose/binaries/main/
+          ls -la composeApp/build/compose/binaries/main/deb/ || true
+          ls -la composeApp/build/compose/binaries/main/rpm/ || true
 
       - name: Upload Linux Artifacts
         uses: actions/upload-artifact@v4
